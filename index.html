@@ -515,6 +515,28 @@
     <ul class="checklist" id="checklist-night"></ul>
   </div>
 
+  <!-- RT / 待办事项 / 正念日记 -->
+  <div class="card" style="background: linear-gradient(135deg, #E8F5EE 0%, #F3E5F5 100%); border: 1px solid #D4EAD9;">
+    <div class="card-title"><span class="dot" style="background: #9C27B0;"></span>🔄 RT & 待办 & 正念日记</div>
+    <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">
+      记录即时的感念、需要提醒的待办、或今日的正念日记。
+    </div>
+    <div class="rt-input-area">
+      <input class="input-field" id="rtInput" placeholder="输入RT/待办/正念..." style="width: 100%; margin-bottom: 8px;" />
+      <div style="display: flex; gap: 8px;">
+        <select class="input-field" id="rtType" style="flex: 1; font-size: 12px; padding: 6px;">
+          <option value="rt">RT（想到就记）</option>
+          <option value="todo">待办（需要做）</option>
+          <option value="mindful">正念日记</option>
+          <option value="gratitude">感念感恩</option>
+        </select>
+        <button class="add-btn" style="padding: 6px 16px; font-size: 13px; flex-shrink: 0;" onclick="addRT()">添加</button>
+      </div>
+    </div>
+    <div class="section-divider"></div>
+    <div id="rtList"></div>
+  </div>
+
   <!-- Heatmap -->
   <div class="card">
     <div class="card-title"><span class="dot"></span>打卡热力图</div>
@@ -625,10 +647,16 @@
     <div class="section-divider"></div>
     <!-- 食物快选 -->
     <div class="food-picker">
-      <div class="food-picker-title">快速添加今日食物（点选后一键记入）</div>
+      <div class="food-picker-title">快速添加食物（点选并输入价格）</div>
       <div class="food-tags" id="foodTags"></div>
+      <div style="margin-top:10px;font-size:12px;color:var(--text-muted);">
+        选中的食物可自定义价格（默认为0），点击"记入"同时记入营养+消费
+      </div>
+      <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
+        <input class="input-field" id="foodPriceInput" type="number" placeholder="¥ 自定义价格" style="flex:1;font-size:13px;padding:6px 12px;border-radius:8px;" />
+        <button class="add-btn" style="padding:6px 16px;font-size:13px;flex-shrink:0;" onclick="logSelectedFoods()">记入选中</button>
+      </div>
     </div>
-    <button class="add-btn" style="background:var(--text-secondary);" onclick="logSelectedFoods()">记入已选食物</button>
   </div>
 
   <!-- 添加记账 -->
@@ -788,17 +816,19 @@ function renderSchedule() {
     if (!ul) return;
     ul.innerHTML = '';
     SCHEDULE_ITEMS[group].forEach(item => {
-      const done = !!sc[item.id];
+      const done = !!(sc[item.id]);
       const li = document.createElement('li');
       li.className = done ? 'done' : '';
       li.innerHTML = `
         <div class="check-box">${done ? '✓' : ''}</div>
         <div class="check-info">
           <div class="check-label">${item.label}</div>
-          <div class="check-time">${item.time}</div>
+          <div class="check-time">${item.time}${done && typeof done === 'string' ? ` (${done}✓)` : ''}</div>
         </div>`;
       li.onclick = () => {
-        sc[item.id] = !sc[item.id];
+        const now = new Date();
+        const timeStr = now.toTimeString().slice(0,5);
+        sc[item.id] = sc[item.id] ? false : timeStr;  // 时间/取消
         saveDB(db);
         renderSchedule();
         renderScheduleRate();
@@ -1053,7 +1083,8 @@ function renderExercise() {
   badgeWrap.innerHTML = `<div class="phase-badge ${phaseInfo.cls}">${phaseInfo.label}<br><span style="font-weight:400;opacity:.8">${phaseInfo.period}</span></div>`;
 
   exData.forEach(ex => {
-    const done = !!doneMap[ex.id];
+    const done = !!(doneMap[ex.id]);
+    const doneTime = typeof doneMap[ex.id] === 'string' ? doneMap[ex.id] : null;
     const div = document.createElement('div');
     div.className = `exercise-item${done ? ' done-ex' : ''}`;
     div.innerHTML = `
@@ -1077,7 +1108,9 @@ function toggleExercise(id, el) {
   const key = getTodayKey();
   if (!db[key]) db[key] = {};
   if (!db[key].exercise) db[key].exercise = {};
-  db[key].exercise[id] = !db[key].exercise[id];
+  const now = new Date();
+  const timeStr = now.toTimeString().slice(0,5);
+  db[key].exercise[id] = db[key].exercise[id] ? false : timeStr;
   saveDB(db);
   renderExercise();
   updateHeatmap();
@@ -1150,6 +1183,10 @@ function renderFoodTags() {
 
 function logSelectedFoods() {
   if (selectedFoods.size === 0) { alert('请先选择食物'); return; }
+  const priceInput = document.getElementById('foodPriceInput');
+  const customPrice = parseFloat(priceInput.value) || 0;
+  const pricePerItem = selectedFoods.size > 1 ? customPrice / selectedFoods.size : customPrice;
+  
   const key = getTodayKey();
   if (!db[key]) db[key] = {};
   if (!db[key].nutrition) db[key].nutrition = { cal:0, pro:0, carb:0, fat:0 };
@@ -1159,11 +1196,13 @@ function logSelectedFoods() {
     db[key].nutrition.pro  += f.pro;
     db[key].nutrition.carb += f.carb;
     db[key].nutrition.fat  += f.fat;
-    // Also add as ledger food item
+    // Also add as ledger food item with custom price
     if (!db[key].ledger) db[key].ledger = [];
-    db[key].ledger.push({ id: Date.now()+Math.random(), desc: f.name, amt:0, cat:'food', nature:'necessary', isFood:true });
+    const amt = pricePerItem > 0 ? pricePerItem : 0;
+    db[key].ledger.push({ id: Date.now()+Math.random(), desc: f.name, amt, cat:'food', nature:'necessary', isFood:true, customPrice: true });
   });
   selectedFoods.clear();
+  priceInput.value = '';
   saveDB(db);
   renderFoodTags();
   renderNutrition();
@@ -1389,6 +1428,83 @@ function renderStats() {
   `;
 }
 
+// ===================== RT / TODO / MINDFUL =====================
+function getTodayRT() {
+  const key = getTodayKey();
+  if (!db[key]) db[key] = {};
+  if (!db[key].rt) db[key].rt = [];
+  return db[key].rt;
+}
+
+function addRT() {
+  const input = document.getElementById('rtInput');
+  const typeSelect = document.getElementById('rtType');
+  const text = input.value.trim();
+  const type = typeSelect.value;
+  if (!text) return;
+  
+  const rtList = getTodayRT();
+  rtList.push({
+    id: Date.now(),
+    text,
+    type,
+    time: new Date().toTimeString().slice(0,5),
+    done: false
+  });
+  saveDB(db);
+  input.value = '';
+  renderRT();
+}
+
+function toggleRT(id) {
+  const list = getTodayRT();
+  const item = list.find(i => i.id === id);
+  if (item) {
+    item.done = !item.done;
+    saveDB(db);
+    renderRT();
+  }
+}
+
+function deleteRT(id) {
+  const list = getTodayRT();
+  const idx = list.findIndex(i => i.id === id);
+  if (idx >= 0) {
+    list.splice(idx, 1);
+    saveDB(db);
+    renderRT();
+  }
+}
+
+function renderRT() {
+  const list = getTodayRT();
+  const container = document.getElementById('rtList');
+  if (list.length === 0) {
+    container.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:20px;font-size:13px;">今天还没有 RT/待办记录~</div>';
+    return;
+  }
+  
+  const typeIcons = { rt:'⚡', todo:'📌', mindful:'🧘', gratitude:'💛' };
+  const typeLabels = { rt:'RT', todo:'待办', mindful:'正念', gratitude:'感念' };
+  container.innerHTML = '';
+  list.forEach(item => {
+    const div = document.createElement('div');
+    div.className = 'ledger-item';
+    div.style.alignItems = 'flex-start';
+    div.innerHTML = `
+      <div style="font-size:16px;flex-shrink:0;margin-top:2px;color:${item.done?'var(--text-muted)':'#9C27B0'}">${typeIcons[item.type]}</div>
+      <div class="ledger-item-info" style="flex:1;">
+        <div class="ledger-item-name" style="${item.done?'text-decoration:line-through;color:var(--text-muted)':''}">${item.text}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${typeLabels[item.type]} · ${item.time}</div>
+      </div>
+      <div style="display:flex;gap:4px;">
+        <div class="ledger-delete" onclick="toggleRT(${item.id})" style="color:${item.done?'#4CAF82':'var(--text-muted)'};">${item.done?'✓':'◯'}</div>
+        <div class="ledger-delete" onclick="deleteRT(${item.id})">✕</div>
+      </div>`;
+    container.appendChild(div);
+  });
+}
+
 // ===================== EXPORT =====================
 function exportMarkdown() {
   const key = getTodayKey();
@@ -1396,6 +1512,7 @@ function exportMarkdown() {
   const ex = (db[key] && db[key].exercise) || {};
   const ledger = (db[key] && db[key].ledger) || [];
   const n = (db[key] && db[key].nutrition) || { cal:0, pro:0, carb:0, fat:0 };
+  const rt = (db[key] && db[key].rt) || [];
 
   const allSchedule = [...SCHEDULE_ITEMS.morning, ...SCHEDULE_ITEMS.office, ...SCHEDULE_ITEMS.night];
   const scheduleDone = allSchedule.filter(i => sc[i.id]).length;
@@ -1407,10 +1524,10 @@ function exportMarkdown() {
     `# 沐沐日记 · ${key}`,
     '',
     `## ☀️ 作息打卡  ${scheduleDone}/${allSchedule.length}`,
-    ...allSchedule.map(i => `- [${sc[i.id]?'x':' '}] ${i.time} ${i.label}`),
+    ...allSchedule.map(i => `- [${sc[i.id]?'x':' '}] ${i.time} ${i.label}${sc[i.id] && typeof sc[i.id]==='string'?` (${sc[i.id]}✓)`:''}`),
     '',
     `## 💪 训练打卡  ${exDone}/${exData.length}`,
-    ...exData.map(e => `- [${ex[e.id]?'x':' '}] ${e.name} ${e.sets}`),
+    ...exData.map(e => `- [${ex[e.id]?'x':' '}] ${e.name} ${e.sets}${ex[e.id] && typeof ex[e.id]==='string'?` (${ex[e.id]}✓)`:''}`),
     '',
     `## 🥗 营养摄入`,
     `- 热量：${Math.round(n.cal)} / ${NUTRITION_GOAL.cal} kcal`,
@@ -1420,6 +1537,15 @@ function exportMarkdown() {
     '',
     `## 💰 今日记账`,
     ...ledger.map(i => `- ${CAT_LABELS[i.cat]} [${NAT_LABELS[i.nature]||''}] ${i.desc}  ¥${(i.amt||0).toFixed(2)}`),
+    '',
+    `## 🔄 RT & 待办 & 正念`,
+    ...(rt.length > 0
+      ? rt.map(item => {
+          const icon = { rt:'⚡', todo:'📌', mindful:'🧘', gratitude:'💛' }[item.type] || '·';
+          const label = { rt:'RT', todo:'待办', mindful:'正念', gratitude:'感念' }[item.type] || '';
+          return `- [${item.done?'x':' '}] ${icon} ${item.text} (${label} · ${item.time})`;
+        })
+      : ['- 今天还没有 RT/待办记录~']),
     '',
     '---',
     '> 清爽甜飒 · 力量线条 · 走路带风 · 生活有序 · 我爱我自己 ✨',
@@ -1486,6 +1612,7 @@ function init() {
   renderFoodTags();
   renderNutrition();
   renderLedger();
+  renderRT();
   updateHeatmap();
   initLedgerBtns();
   // Restore energy log
